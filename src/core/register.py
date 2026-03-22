@@ -555,6 +555,158 @@ class RegistrationEngine:
             self._log(f"获取 Workspace ID 失败: {e}", "error")
             return None
 
+    def _passwordless_login_flow(self) -> Optional[str]:
+        """
+        Passwordless 登录降级流程
+
+        当 create_account 后 cookie 中没有 workspace 信息时，
+        通过 passwordless 登录重新获取带 workspace 的 cookie。
+
+        流程：
+        1. 重置 HTTP session
+        2. 生成新 OAuth URL
+        3. 获取新 Device ID + Sentinel Token
+        4. 提交邮箱 (screen_hint="login")
+        5. POST /passwordless/send-otp 触发 OTP
+        6. 获取验证码并验证
+        7. 返回 workspace_id
+
+        Returns:
+            workspace_id 或 None
+        """
+        try:
+            self._log("触发 Passwordless 登录降级流程...")
+
+            # 1. 重置 HTTP session（避免旧注册状态干扰）
+            self._log("12.5a. 重置 HTTP session...")
+            self.http_client.close()
+            self.session = self.http_client.session
+
+            # 2. 生成新 OAuth URL（需要独立的 PKCE 参数）
+            self._log("12.5b. 生成新 OAuth URL...")
+            if not self._start_oauth():
+                self._log("生成新 OAuth URL 失败", "error")
+                return None
+
+            # 3. 获取新 Device ID
+            self._log("12.5c. 获取新 Device ID...")
+            did = self._get_device_id()
+            if not did:
+                self._log("获取 Device ID 失败", "error")
+                return None
+
+            # 4. 获取 Sentinel Token
+            self._log("12.5d. 获取 Sentinel Token...")
+            sen_token = self._check_sentinel(did)
+            if not sen_token:
+                self._log("Sentinel 检查失败", "warning")
+
+            # 5. 提交邮箱 (screen_hint="login")
+            self._log("12.5e. 提交登录表单...")
+            login_body = f'{{"username":{{"value":"{self.email}","kind":"email"}},"screen_hint":"login"}}'
+
+            headers = {
+                "referer": "https://auth.openai.com/login",
+                "accept": "application/json",
+                "content-type": "application/json",
+            }
+
+            if sen_token:
+                sentinel = f'{{"p": "", "t": "", "c": "{sen_token}", "id": "{did}", "flow": "authorize_continue"}}'
+                headers["openai-sentinel-token"] = sentinel
+
+            response = self.session.post(
+                OPENAI_API_ENDPOINTS["signup"],
+                headers=headers,
+                data=login_body,
+            )
+
+            self._log(f"登录表单响应状态: {response.status_code}")
+
+            if response.status_code != 200:
+                self._log(f"提交登录表单失败: {response.text[:200]}", "error")
+                return None
+
+            # 检查响应页面类型
+            try:
+                response_data = response.json()
+                page_type = response_data.get("page", {}).get("type", "")
+                self._log(f"登录响应页面类型: {page_type}")
+            except Exception:
+                pass
+
+            # 6. POST /passwordless/send-otp 触发 OTP（跳过密码验证）
+            self._log("12.5f. 发送 Passwordless OTP...")
+            otp_response = self.session.post(
+                OPENAI_API_ENDPOINTS["passwordless_send_otp"],
+                headers={
+                    "referer": "https://auth.openai.com/login/password",
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+            )
+
+            self._log(f"Passwordless OTP 响应状态: {otp_response.status_code}")
+
+            if otp_response.status_code != 200:
+                self._log(f"发送 Passwordless OTP 失败: {otp_response.text[:200]}", "error")
+                return None
+
+            # 7. 获取验证码
+            self._log("12.5g. 等待登录验证码...")
+            self._otp_sent_at = time.time()
+            code = self._get_verification_code()
+            if not code:
+                self._log("获取登录验证码失败", "error")
+                return None
+
+            # 8. 验证验证码
+            self._log("12.5h. 验证登录验证码...")
+            code_body = f'{{"code":"{code}"}}'
+
+            validate_response = self.session.post(
+                OPENAI_API_ENDPOINTS["validate_otp"],
+                headers={
+                    "referer": "https://auth.openai.com/login/email-otp",
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                },
+                data=code_body,
+            )
+
+            self._log(f"验证码校验状态: {validate_response.status_code}")
+
+            if validate_response.status_code != 200:
+                self._log(f"验证登录验证码失败: {validate_response.text[:200]}", "error")
+                return None
+
+            # 9. 获取 continue_url 并访问（服务端会签发含 workspace 的 Cookie）
+            try:
+                validate_data = validate_response.json()
+                continue_url = validate_data.get("continue_url", "")
+
+                if continue_url:
+                    self._log(f"12.5i. 访问 continue_url: {continue_url[:80]}...")
+                    consent_response = self.session.get(continue_url, timeout=15)
+                    self._log(f"Consent 页面状态: {consent_response.status_code}")
+            except Exception as e:
+                self._log(f"处理 continue_url 失败: {e}", "warning")
+
+            # 10. 获取 workspace_id
+            self._log("12.5j. 重新获取 Workspace ID...")
+            workspace_id = self._get_workspace_id()
+
+            if workspace_id:
+                self._log(f"Passwordless 登录成功，获取到 Workspace ID: {workspace_id}")
+            else:
+                self._log("Passwordless 登录后仍未获取到 Workspace ID", "error")
+
+            return workspace_id
+
+        except Exception as e:
+            self._log(f"Passwordless 登录流程异常: {e}", "error")
+            return None
+
     def _select_workspace(self, workspace_id: str) -> Optional[str]:
         """选择 Workspace"""
         try:
@@ -768,9 +920,14 @@ class RegistrationEngine:
             # 13. 获取 Workspace ID
             self._log("13. 获取 Workspace ID...")
             workspace_id = self._get_workspace_id()
+
+            # 如果获取失败，触发 Passwordless 登录降级流程
             if not workspace_id:
-                result.error_message = "获取 Workspace ID 失败"
-                return result
+                self._log("Cookie 中无 workspace 信息，触发降级登录流程...", "warning")
+                workspace_id = self._passwordless_login_flow()
+                if not workspace_id:
+                    result.error_message = "获取 Workspace ID 失败（降级登录也失败）"
+                    return result
 
             result.workspace_id = workspace_id
 
