@@ -38,6 +38,7 @@ class EmailServiceType(str, Enum):
     DUCK_MAIL = "duck_mail"
     FREEMAIL = "freemail"
     IMAP_MAIL = "imap_mail"
+    MAIL_TM = "mail_tm"
 
 
 # ============================================================================

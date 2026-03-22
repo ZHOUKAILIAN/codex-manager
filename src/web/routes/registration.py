@@ -265,6 +265,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
             # 创建邮箱服务
             service_type = EmailServiceType(email_service_type)
             settings = get_settings()
+            fallback_email_service = None
 
             # 优先使用数据库中配置的邮箱服务
             if email_service_id:
@@ -291,6 +292,25 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                         "max_retries": settings.tempmail_max_retries,
                         "proxy_url": actual_proxy_url,
                     }
+                    from ...database.models import EmailService as EmailServiceModel
+
+                    fallback_service = db.query(EmailServiceModel).filter(
+                        EmailServiceModel.service_type == "mail_tm",
+                        EmailServiceModel.enabled == True
+                    ).order_by(EmailServiceModel.priority.asc()).first()
+
+                    if fallback_service and fallback_service.config:
+                        fallback_config = _normalize_email_service_config(
+                            EmailServiceType.MAIL_TM,
+                            fallback_service.config,
+                            actual_proxy_url
+                        )
+                        fallback_email_service = EmailServiceFactory.create(
+                            EmailServiceType.MAIL_TM,
+                            fallback_config,
+                            fallback_service.name
+                        )
+                        logger.info(f"Tempmail 默认服务已配置 Mail.tm 备用服务: {fallback_service.name}")
                 elif service_type == EmailServiceType.MOE_MAIL:
                     # 检查数据库中是否有可用的自定义域名服务
                     from ...database.models import EmailService as EmailServiceModel
@@ -386,6 +406,20 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                         logger.info(f"使用数据库 IMAP 邮箱服务: {db_service.name}")
                     else:
                         raise ValueError("没有可用的 IMAP 邮箱服务，请先在邮箱服务中添加")
+                elif service_type == EmailServiceType.MAIL_TM:
+                    from ...database.models import EmailService as EmailServiceModel
+
+                    db_service = db.query(EmailServiceModel).filter(
+                        EmailServiceModel.service_type == "mail_tm",
+                        EmailServiceModel.enabled == True
+                    ).order_by(EmailServiceModel.priority.asc()).first()
+
+                    if db_service and db_service.config:
+                        config = _normalize_email_service_config(service_type, db_service.config, actual_proxy_url)
+                        crud.update_registration_task(db, task_uuid, email_service_id=db_service.id)
+                        logger.info(f"使用数据库 Mail.tm 服务: {db_service.name}")
+                    else:
+                        raise ValueError("没有可用的 Mail.tm 邮箱服务，请先在邮箱服务中添加")
                 else:
                     config = email_service_config or {}
 
@@ -396,6 +430,7 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
 
             engine = RegistrationEngine(
                 email_service=email_service,
+                fallback_email_service=fallback_email_service,
                 proxy_url=actual_proxy_url,
                 callback_logger=log_callback,
                 task_uuid=task_uuid
@@ -1087,6 +1122,7 @@ async def get_available_email_services():
     - tempmail: 临时邮箱（无需配置）
     - outlook: 已导入的 Outlook 账户
     - moe_mail: 已配置的自定义域名服务
+    - mail_tm: 已配置的 Mail.tm 服务
     """
     from ...database.models import EmailService as EmailServiceModel
     from ...config.settings import get_settings
@@ -1124,6 +1160,11 @@ async def get_available_email_services():
             "services": []
         },
         "freemail": {
+            "available": False,
+            "count": 0,
+            "services": []
+        },
+        "mail_tm": {
             "available": False,
             "count": 0,
             "services": []
@@ -1240,6 +1281,24 @@ async def get_available_email_services():
 
         result["freemail"]["count"] = len(freemail_services)
         result["freemail"]["available"] = len(freemail_services) > 0
+
+        mail_tm_services = db.query(EmailServiceModel).filter(
+            EmailServiceModel.service_type == "mail_tm",
+            EmailServiceModel.enabled == True
+        ).order_by(EmailServiceModel.priority.asc()).all()
+
+        for service in mail_tm_services:
+            config = service.config or {}
+            result["mail_tm"]["services"].append({
+                "id": service.id,
+                "name": service.name,
+                "type": "mail_tm",
+                "base_url": config.get("base_url"),
+                "priority": service.priority
+            })
+
+        result["mail_tm"]["count"] = len(mail_tm_services)
+        result["mail_tm"]["available"] = len(mail_tm_services) > 0
 
         imap_mail_services = db.query(EmailServiceModel).filter(
             EmailServiceModel.service_type == "imap_mail",

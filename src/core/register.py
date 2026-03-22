@@ -91,6 +91,7 @@ class RegistrationEngine:
     def __init__(
         self,
         email_service: BaseEmailService,
+        fallback_email_service: Optional[BaseEmailService] = None,
         proxy_url: Optional[str] = None,
         callback_logger: Optional[Callable[[str], None]] = None,
         task_uuid: Optional[str] = None
@@ -100,11 +101,13 @@ class RegistrationEngine:
 
         Args:
             email_service: 邮箱服务实例
+            fallback_email_service: 主邮箱服务失败时的备用邮箱服务
             proxy_url: 代理 URL
             callback_logger: 日志回调函数
             task_uuid: 任务 UUID（用于数据库记录）
         """
         self.email_service = email_service
+        self.fallback_email_service = fallback_email_service
         self.proxy_url = proxy_url
         self.callback_logger = callback_logger or (lambda msg: logger.info(msg))
         self.task_uuid = task_uuid
@@ -190,6 +193,15 @@ class RegistrationEngine:
 
         except Exception as e:
             self._log(f"创建邮箱失败: {e}", "error")
+            if self.fallback_email_service:
+                fallback_service = self.fallback_email_service
+                self._log(
+                    f"主邮箱服务 {self.email_service.service_type.value} 不可用，回退到 {fallback_service.service_type.value} 重试...",
+                    "warning"
+                )
+                self.email_service = fallback_service
+                self.fallback_email_service = None
+                return self._create_email()
             return False
 
     def _start_oauth(self) -> bool:
@@ -440,10 +452,18 @@ class RegistrationEngine:
             self._log(f"正在等待邮箱 {self.email} 的验证码...")
 
             email_id = self.email_info.get("service_id") if self.email_info else None
+            settings = get_settings()
+            timeout = settings.email_code_timeout
+            if self.email_service.service_type in {
+                EmailServiceType.MAIL_TM,
+                EmailServiceType.TEMPMAIL,
+                EmailServiceType.TEMP_MAIL,
+            }:
+                timeout = max(timeout, 300)
             code = self.email_service.get_verification_code(
                 email=self.email,
                 email_id=email_id,
-                timeout=120,
+                timeout=timeout,
                 pattern=OTP_CODE_PATTERN,
                 otp_sent_at=self._otp_sent_at,
             )
