@@ -15,6 +15,7 @@ from ...services import EmailServiceFactory, EmailServiceType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+SUPPORTED_EMAIL_SERVICE_TYPES = {service_type.value for service_type in EmailServiceType}
 
 
 # ============== Pydantic Models ==============
@@ -133,10 +134,13 @@ async def get_email_services_stats():
         type_stats = db.query(
             EmailServiceModel.service_type,
             func.count(EmailServiceModel.id)
+        ).filter(
+            EmailServiceModel.service_type.in_(SUPPORTED_EMAIL_SERVICE_TYPES)
         ).group_by(EmailServiceModel.service_type).all()
 
         # 启用数量
         enabled_count = db.query(func.count(EmailServiceModel.id)).filter(
+            EmailServiceModel.service_type.in_(SUPPORTED_EMAIL_SERVICE_TYPES),
             EmailServiceModel.enabled == True
         ).scalar()
 
@@ -258,7 +262,9 @@ async def list_email_services(
 ):
     """获取邮箱服务列表"""
     with get_db() as db:
-        query = db.query(EmailServiceModel)
+        query = db.query(EmailServiceModel).filter(
+            EmailServiceModel.service_type.in_(SUPPORTED_EMAIL_SERVICE_TYPES)
+        )
 
         if service_type:
             query = query.filter(EmailServiceModel.service_type == service_type)
@@ -281,6 +287,8 @@ async def get_email_service(service_id: int):
         service = db.query(EmailServiceModel).filter(EmailServiceModel.id == service_id).first()
         if not service:
             raise HTTPException(status_code=404, detail="服务不存在")
+        if service.service_type not in SUPPORTED_EMAIL_SERVICE_TYPES:
+            raise HTTPException(status_code=404, detail="服务不存在")
         return service_to_response(service)
 
 
@@ -290,6 +298,8 @@ async def get_email_service_full(service_id: int):
     with get_db() as db:
         service = db.query(EmailServiceModel).filter(EmailServiceModel.id == service_id).first()
         if not service:
+            raise HTTPException(status_code=404, detail="服务不存在")
+        if service.service_type not in SUPPORTED_EMAIL_SERVICE_TYPES:
             raise HTTPException(status_code=404, detail="服务不存在")
 
         return {
@@ -387,6 +397,8 @@ async def test_email_service(service_id: int):
         service = db.query(EmailServiceModel).filter(EmailServiceModel.id == service_id).first()
         if not service:
             raise HTTPException(status_code=404, detail="服务不存在")
+        if service.service_type not in SUPPORTED_EMAIL_SERVICE_TYPES:
+            raise HTTPException(status_code=400, detail=f"不支持的服务类型: {service.service_type}")
 
         try:
             service_type = EmailServiceType(service.service_type)

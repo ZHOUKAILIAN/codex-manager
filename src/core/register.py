@@ -455,7 +455,6 @@ class RegistrationEngine:
             settings = get_settings()
             timeout = settings.email_code_timeout
             if self.email_service.service_type in {
-                EmailServiceType.MAIL_TM,
                 EmailServiceType.TEMPMAIL,
                 EmailServiceType.TEMP_MAIL,
             }:

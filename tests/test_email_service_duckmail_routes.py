@@ -92,3 +92,46 @@ def test_registration_available_services_include_duck_mail(monkeypatch):
     assert result["duck_mail"]["services"][0]["name"] == "DuckMail 主服务"
     assert result["duck_mail"]["services"][0]["type"] == "duck_mail"
     assert result["duck_mail"]["services"][0]["default_domain"] == "duckmail.sbs"
+
+
+def test_registration_available_services_exclude_mail_tm(monkeypatch):
+    runtime_dir = Path("tests_runtime")
+    runtime_dir.mkdir(exist_ok=True)
+    db_path = runtime_dir / "mailtm_routes.db"
+    if db_path.exists():
+        db_path.unlink()
+
+    manager = DatabaseSessionManager(f"sqlite:///{db_path}")
+    Base.metadata.create_all(bind=manager.engine)
+
+    with manager.session_scope() as session:
+        session.add(
+            EmailService(
+                service_type="mail_tm",
+                name="Mail.tm 主服务",
+                config={
+                    "base_url": "https://api.mail.tm",
+                    "proxy_url": "http://127.0.0.1:7890",
+                },
+                enabled=True,
+                priority=0,
+            )
+        )
+
+    @contextmanager
+    def fake_get_db():
+        session = manager.SessionLocal()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    monkeypatch.setattr(registration_routes, "get_db", fake_get_db)
+
+    import src.config.settings as settings_module
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: DummySettings())
+
+    result = asyncio.run(registration_routes.get_available_email_services())
+
+    assert "mail_tm" not in result

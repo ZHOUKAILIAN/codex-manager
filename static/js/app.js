@@ -25,7 +25,6 @@ let availableServices = {
     temp_mail: { available: false, services: [] },
     duck_mail: { available: false, services: [] },
     freemail: { available: false, services: [] },
-    mail_tm: { available: false, services: [] },
     imap_mail: { available: false, services: [] }
 };
 
@@ -376,30 +375,8 @@ function updateEmailServiceOptions() {
         select.appendChild(optgroup);
     }
 
-    // Mail.tm
-    if (availableServices.mail_tm && availableServices.mail_tm.available) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = `📬 Mail.tm (${availableServices.mail_tm.count} 个服务)`;
-
-        availableServices.mail_tm.services.forEach(service => {
-            const option = document.createElement('option');
-            option.value = `mail_tm:${service.id}`;
-            option.textContent = service.name;
-            option.dataset.type = 'mail_tm';
-            option.dataset.serviceId = service.id;
-            optgroup.appendChild(option);
-        });
-
-        select.appendChild(optgroup);
-    }
-
     if (Array.from(select.options).some(option => option.value === previousValue)) {
         select.value = previousValue;
-    } else if (previousValue === 'tempmail:default' && availableServices.mail_tm?.available) {
-        const preferredMailTm = availableServices.mail_tm.services[0];
-        if (preferredMailTm) {
-            select.value = `mail_tm:${preferredMailTm.id}`;
-        }
     } else if (select.options.length > 0) {
         select.selectedIndex = 0;
     }
@@ -454,11 +431,6 @@ function handleServiceChange(e) {
         const service = availableServices.freemail.services.find(s => s.id == id);
         if (service) {
             addLog('info', `[系统] 已选择 Freemail 服务: ${service.name}`);
-        }
-    } else if (type === 'mail_tm') {
-        const service = availableServices.mail_tm.services.find(s => s.id == id);
-        if (service) {
-            addLog('info', `[系统] 已选择 Mail.tm 服务: ${service.name}`);
         }
     }
 }
