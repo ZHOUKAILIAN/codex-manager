@@ -228,14 +228,14 @@ class BaseEmailService(abc.ABC):
             return value.timestamp()
 
         if isinstance(value, (int, float)):
-            return float(value)
+            return self._normalize_unix_timestamp(float(value))
 
         text = str(value).strip()
         if not text:
             return None
 
         try:
-            return float(text)
+            return self._normalize_unix_timestamp(float(text))
         except ValueError:
             pass
 
@@ -244,6 +244,15 @@ class BaseEmailService(abc.ABC):
             return datetime.fromisoformat(normalized).timestamp()
         except ValueError:
             return None
+
+    def _normalize_unix_timestamp(self, value: float) -> float:
+        """将秒/毫秒/微秒级 Unix 时间统一归一到秒。"""
+        absolute = abs(value)
+        if absolute >= 1e14:
+            return value / 1_000_000
+        if absolute >= 1e11:
+            return value / 1_000
+        return value
 
     def _is_message_before_otp(self, message_time: Any, otp_sent_at: Optional[float], tolerance_seconds: int = 1) -> bool:
         """
