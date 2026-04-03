@@ -16,6 +16,7 @@ from ...config.settings import get_settings
 from ...database.session import get_db
 from ...database import crud
 from ...database.models import Account
+from ..http_client import resolve_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class TokenRefreshManager:
         Args:
             proxy_url: 代理 URL
         """
-        self.proxy_url = proxy_url
+        self.proxy_url = resolve_proxy_url(proxy_url)
         self.settings = get_settings()
 
     def _create_session(self) -> cffi_requests.Session:

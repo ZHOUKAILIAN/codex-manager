@@ -21,6 +21,7 @@ from ...config.constants import (
     OAUTH_REDIRECT_URI,
     OAUTH_SCOPE,
 )
+from ..http_client import resolve_proxy_url
 
 
 def _b64url_no_pad(raw: bytes) -> str:
@@ -141,6 +142,7 @@ def _post_form(
         响应 JSON 数据
     """
     # 构建代理配置
+    proxy_url = resolve_proxy_url(proxy_url)
     proxies = None
     if proxy_url:
         proxies = {
@@ -328,7 +330,7 @@ class OAuthManager:
         self.token_url = token_url
         self.redirect_uri = redirect_uri
         self.scope = scope
-        self.proxy_url = proxy_url
+        self.proxy_url = resolve_proxy_url(proxy_url)
 
     def start_oauth(self) -> OAuthStart:
         """开始 OAuth 流程"""

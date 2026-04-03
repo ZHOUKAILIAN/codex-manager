@@ -19,6 +19,13 @@ from ..config.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+def resolve_proxy_url(proxy_url: Optional[str] = None) -> Optional[str]:
+    """解析 OpenAI 请求应使用的代理 URL。"""
+    if proxy_url:
+        return proxy_url
+    return get_settings().proxy_url
+
+
 @dataclass
 class RequestConfig:
     """HTTP 请求配置"""
@@ -55,7 +62,7 @@ class HTTPClient:
             config: 请求配置
             session: 可重用的会话对象
         """
-        self.proxy_url = proxy_url
+        self.proxy_url = resolve_proxy_url(proxy_url)
         self.config = config or RequestConfig()
         self._session = session
 

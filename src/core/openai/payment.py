@@ -10,6 +10,7 @@ from typing import Optional
 from curl_cffi import requests as cffi_requests
 
 from ...database.models import Account
+from ..http_client import resolve_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ TEAM_CHECKOUT_BASE_URL = "https://chatgpt.com/checkout/openai_llc/"
 
 
 def _build_proxies(proxy: Optional[str]) -> Optional[dict]:
+    proxy = resolve_proxy_url(proxy)
     if proxy:
         return {"http": proxy, "https": proxy}
     return None
